@@ -1,4 +1,4 @@
-
+# ui.py
 import pygame
 
 def show_popup(screen, success, time_s, moves):

@@ -1,7 +1,7 @@
 # warehouse.py
 import random
 
-GRID_W = 20
+GRID_W = 27
 GRID_H = 15
 CELL = 32
 
@@ -28,3 +28,5 @@ def create_warehouse(initial_boxes=30, max_stack_initial=1):
 
     destination_cells = [(GRID_H - 1, x) for x in range(GRID_W)]
     return warehouse, destination_cells
+
+
