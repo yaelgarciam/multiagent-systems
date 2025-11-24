@@ -3,6 +3,7 @@ import math
 import random
 import pygame
 from bfs import bfs, neighbors4
+from warehouse import get_walls
 
 CELL = 32
 MOVE_SPEED = 3
@@ -32,6 +33,8 @@ class Robot:
         self.moves = 0
         self.wait_frames = 0
 
+        self.walls = get_walls()
+
     def dist_manhattan(self, a, b):
         return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
@@ -55,7 +58,7 @@ class Robot:
             if self.warehouse[pile[0]][pile[1]] < 5:
                 adj = []
                 for nr, nc in neighbors4(pile[0], pile[1], H, W):
-                    if self.warehouse[nr][nc] == 0:
+                    if self.warehouse[nr][nc] == 0 and (nr, nc) not in self.walls:
                         adj.append((nr, nc))
                 if adj:
                     return set(adj), pile
@@ -72,6 +75,9 @@ class Robot:
         return True
 
     def safe_move(self, nr, nc, robots_positions, allowed_map):
+        if (nr, nc) in self.walls:
+            return False
+        
         if self.dist_manhattan((self.r, self.c), (nr, nc)) != 1 and (nr, nc) != (self.r, self.c):
             return False
 
@@ -80,6 +86,7 @@ class Robot:
 
         if (nr, nc) in robots_positions:
             return False
+        
         if self.warehouse[nr][nc] > 0:
             return False
 
@@ -134,6 +141,7 @@ class Robot:
                     for c in range(W):
                         if self.warehouse[r][c] > 0:
                             occupied.add((r, c))
+                occupied |= self.walls
                 if (self.r, self.c) in occupied:
                     occupied.remove((self.r, self.c))
                 goal = self.path[-1] if self.path else None
@@ -167,7 +175,7 @@ class Robot:
                 for c in range(W):
                     if self.warehouse[r][c] > 0 and (r, c) not in self.destinations:
                         for nr, nc in neighbors4(r, c, H, W):
-                            if self.warehouse[nr][nc] == 0 and (nr, nc) not in robots_positions:
+                            if self.warehouse[nr][nc] == 0 and (nr, nc) not in robots_positions and (nr, nc) not in self.walls:
                                 goals.add((nr, nc))
 
             if not goals:
@@ -179,6 +187,7 @@ class Robot:
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+            blocked |= self.walls
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
@@ -216,6 +225,7 @@ class Robot:
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+            blocked |= self.walls
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
@@ -271,7 +281,7 @@ class Robot:
 
                 adj_free = set()
                 for ar, ac in neighbors4(found[0], found[1], H, W):
-                    if self.warehouse[ar][ac] == 0 and (ar, ac) not in robots_positions:
+                    if self.warehouse[ar][ac] == 0 and (ar, ac) not in robots_positions and (ar, ac) not in self.walls:
                         adj_free.add((ar, ac))
 
                 if not adj_free:
@@ -285,6 +295,7 @@ class Robot:
                     for cc in range(W):
                         if self.warehouse[rr][cc] > 0:
                             blocked.add((rr, cc))
+                blocked |= self.walls
                 if (self.r, self.c) in blocked:
                     blocked.remove((self.r, self.c))
 
@@ -308,12 +319,13 @@ class Robot:
             return
 
         if self.state == "form":
-            goal = (0, min(self.id, W-1))
+            goal = (1, min(self.id, W-1))
             blocked = set(robots_positions)
             for rr in range(H):
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+            blocked |= self.walls
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
