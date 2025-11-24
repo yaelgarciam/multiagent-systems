@@ -8,6 +8,10 @@ from warehouse import get_walls
 CELL = 32
 MOVE_SPEED = 3
 
+FPS = 30              # igual que en game.py
+STUCK_TIME_S = 3
+STUCK_FRAMES = FPS * STUCK_TIME_S
+
 class Robot:
     def __init__(self, rid, r, c, warehouse, destination_cells, color=(80, 180, 255)):
         self.id = rid
@@ -36,6 +40,10 @@ class Robot:
         # Paredes (NO pisables)
         self.walls = get_walls()
 
+        # Anti-stuck
+        self.stuck_frames = 0
+        self.last_pos = (self.r, self.c)
+
     def dist_manhattan(self, a, b):
         return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
@@ -52,10 +60,21 @@ class Robot:
         return goals
 
     def find_drop_adjacent_goals(self):
+        """
+        Busca celdas libres adyacentes a las pilas de destino
+        en la fila de piso (una arriba de la pared).
+        """
         H = len(self.warehouse)
         W = len(self.warehouse[0])
-        for col in range(W):
-            pile = (H-1, col)
+
+        # fila destino tomada de destination_cells
+        if self.destinations:
+            dest_row = self.destinations[0][0]
+        else:
+            dest_row = H - 2  # fallback
+
+        for col in range(1, W - 1):
+            pile = (dest_row, col)
             if self.warehouse[pile[0]][pile[1]] < 5:
                 adj = []
                 for nr, nc in neighbors4(pile[0], pile[1], H, W):
@@ -124,6 +143,94 @@ class Robot:
         W = len(self.warehouse[0])
         robots_positions = {(rb.r, rb.c) for rb in robots if rb is not self}
 
+        # ---------------- DETECT STUCK (3s sin moverse) ----------------
+        if (self.r, self.c) == self.last_pos:
+            self.stuck_frames += 1
+        else:
+            self.stuck_frames = 0
+
+        self.last_pos = (self.r, self.c)
+
+        if self.stuck_frames >= STUCK_FRAMES:
+            # 1) Si está buscando caja, intentar BFS ignorando robots
+            if self.state == "search":
+                goals = set()
+                for r in range(H):
+                    for c in range(W):
+                        if self.warehouse[r][c] > 0 and (r, c) not in self.destinations:
+                            for nr, nc in neighbors4(r, c, H, W):
+                                if (
+                                    self.warehouse[nr][nc] == 0
+                                    and (nr, nc) not in self.walls
+                                ):
+                                    goals.add((nr, nc))
+
+                if goals:
+                    blocked = set()
+                    for rr in range(H):
+                        for cc in range(W):
+                            if self.warehouse[rr][cc] > 0:
+                                blocked.add((rr, cc))
+                    blocked |= self.walls
+
+                    route = bfs((self.r, self.c), goals, blocked, self.warehouse)
+                    if route:
+                        if route[0] == (self.r, self.c):
+                            route = route[1:]
+                        self.path = route
+                        self.state = "going_box"
+                        self.stuck_frames = 0
+                        return
+
+            # 2) Si está intentando dejar caja, replan drop ignorando robots
+            elif self.state in ("plan_drop", "going_drop") and self.carrying:
+                adj_goals, pile = self.find_drop_adjacent_goals()
+                if adj_goals:
+                    blocked = set()
+                    for rr in range(H):
+                        for cc in range(W):
+                            if self.warehouse[rr][cc] > 0:
+                                blocked.add((rr, cc))
+                    blocked |= self.walls
+
+                    route = bfs((self.r, self.c), adj_goals, blocked, self.warehouse)
+                    if route:
+                        if route[0] == (self.r, self.c):
+                            route = route[1:]
+                        self.path = route
+                        self.target_pile = pile
+                        self.state = "going_drop"
+                        self.stuck_frames = 0
+                        return
+
+            # 3) Si está formando, intentar form ignorando robots
+            elif self.state == "form":
+                goal = (1, min(self.id, W-1))
+                blocked = set()
+                for rr in range(H):
+                    for cc in range(W):
+                        if self.warehouse[rr][cc] > 0:
+                            blocked.add((rr, cc))
+                blocked |= self.walls
+
+                route = bfs((self.r, self.c), [goal], blocked, self.warehouse)
+                if route:
+                    if route[0] == (self.r, self.c):
+                        route = route[1:]
+                    self.path = route
+                    self.stuck_frames = 0
+                    return
+
+            # 4) Fallback: reset de estado
+            self.path = []
+            if self.state in ("going_drop", "plan_drop"):
+                self.state = "plan_drop"
+            else:
+                self.state = "search"
+            self.wait_frames = random.randint(1, 3)
+            self.stuck_frames = 0
+            return
+
         # ---------------- MOVEMENT ----------------
         if self.path:
             if not self._path_is_valid_adjacent_steps(self.path):
@@ -156,7 +263,8 @@ class Robot:
                 if not new_route:
                     self.path = []
                     self.wait_frames = random.randint(0, 3)
-                    self.state = "plan_drop" if self.state in ("going_drop", "plan_drop") else self.state
+                    if self.state in ("going_drop", "plan_drop"):
+                        self.state = "plan_drop"
                     return
 
                 if new_route[0] == (self.r, self.c):
@@ -180,7 +288,6 @@ class Robot:
                         for nr, nc in neighbors4(r, c, H, W):
                             if (
                                 self.warehouse[nr][nc] == 0
-                                and (nr, nc) not in robots_positions
                                 and (nr, nc) not in self.walls
                             ):
                                 goals.add((nr, nc))
@@ -189,13 +296,13 @@ class Robot:
                 self.wait_frames = random.randint(1, 3)
                 return
 
+            # robots + cajas + paredes bloquean BFS
             blocked = set(robots_positions)
             for rr in range(H):
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
 
-            # paredes bloquean BFS
             blocked |= self.walls
 
             if (self.r, self.c) in blocked:
@@ -207,6 +314,8 @@ class Robot:
                     route = route[1:]
                 self.path = route
                 self.state = "going_box"
+            else:
+                self.wait_frames = random.randint(1, 3)
             return
 
         # ---- GOING BOX ----
@@ -271,15 +380,21 @@ class Robot:
                         self.target_pile = None
                         return
 
+                # fila destino (piso) para buscar otra columna
+                if self.destinations:
+                    dest_row = self.destinations[0][0]
+                else:
+                    dest_row = H - 2
+
                 found = None
-                for col in range(pc+1, W):
-                    if self.warehouse[H-1][col] < 5:
-                        found = (H-1, col)
+                for col in range(pc-1, 0, -1):
+                    if self.warehouse[dest_row][col] < 5:
+                        found = (dest_row, col)
                         break
                 if not found:
-                    for col in range(pc-1, -1, -1):
-                        if self.warehouse[H-1][col] < 5:
-                            found = (H-1, col)
+                    for col in range(pc-1, 0, -1):
+                        if self.warehouse[dest_row][col] < 5:
+                            found = (dest_row, col)
                             break
 
                 if not found:
@@ -328,9 +443,12 @@ class Robot:
 
         # ---- FORM ----
         if self.state == "form":
-            goal = (1, min(self.id, W-1))   # fila 1 → no usar la pared de arriba
+            # meta: fila 1, columna según id, sin tocar la pared de arriba
+            goal_col = min(self.id, W - 2)   # evitar última columna pegada a pared
+            goal = (1, goal_col)
 
-            blocked = set(robots_positions)
+            # EN FORM: ignoramos robots, solo bloquean cajas + paredes
+            blocked = set()
             for rr in range(H):
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
@@ -338,6 +456,7 @@ class Robot:
 
             blocked |= self.walls
 
+            # nunca nos bloqueamos a nosotros mismos
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 

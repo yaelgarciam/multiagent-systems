@@ -32,7 +32,7 @@ def create_warehouse(initial_boxes=30, max_stack_initial=1):
     """
     Crea y devuelve (warehouse, destination_cells)
     warehouse: matriz GRID_H x GRID_W con counts de cajas por celda
-    destination_cells: lista de celdas en la fila inferior (destino)
+    destination_cells: lista de celdas en la fila de piso (una arriba de la pared)
     """
     warehouse = [[0 for _ in range(GRID_W)] for _ in range(GRID_H)]
     walls = get_walls()  # para no poner cajas en el borde
@@ -40,13 +40,16 @@ def create_warehouse(initial_boxes=30, max_stack_initial=1):
     placed = 0
     attempts = 0
 
-    # cajas iniciales solo en el área interior (no en la fila destino ni en paredes)
+    # fila destino = piso (una arriba de la pared inferior)
+    dest_row = GRID_H - 2
+
+    # cajas iniciales solo en el área interior (no en fila destino ni en paredes)
     while placed < initial_boxes and attempts < initial_boxes * 50:
-        r = random.randint(0, GRID_H - 5)   # evitar zona de destino
+        r = random.randint(0, GRID_H - 5)   # evitar zona de destino (últimas filas)
         c = random.randint(0, GRID_W - 1)
 
-        # NO poner cajas en el borde de ladrillos
-        if (r, c) in walls:
+        # NO poner cajas en el borde de ladrillos ni en fila destino
+        if (r, c) in walls or r == dest_row:
             attempts += 1
             continue
 
@@ -56,6 +59,6 @@ def create_warehouse(initial_boxes=30, max_stack_initial=1):
                 placed += 1
         attempts += 1
 
-    # las pilas de destino siguen siendo la fila inferior del grid
-    destination_cells = [(GRID_H - 1, x) for x in range(GRID_W)]
+    # las pilas de destino están en la fila de piso
+    destination_cells = [(dest_row, x) for x in range(1, GRID_W - 1)]
     return warehouse, destination_cells

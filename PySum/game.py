@@ -12,6 +12,11 @@ clock = pygame.time.Clock()
 background_img = pygame.image.load("sources/scenario.jpg").convert()
 background_img = pygame.transform.scale(background_img, (GRID_W * CELL, GRID_H * CELL))
 
+# cargar sprite de la caja
+box_img = pygame.image.load("sources/box.png").convert_alpha()
+box_img = pygame.transform.scale(box_img, (CELL, CELL))
+
+
 # create warehouse and destination cells
 warehouse, destination_cells = create_warehouse(initial_boxes=30, max_stack_initial=1)
 walls = get_walls()
@@ -53,7 +58,7 @@ for i in range(NUM_ROBOTS):
 for rb in robots:
     rb.update(robots, {})
 
-TIME_LIMIT_MS = 90_000  # 90 seconds
+TIME_LIMIT_MS = 100_000  # 100 seconds
 start_time_ms = pygame.time.get_ticks()
 finished = False
 total_moves = 0
@@ -75,9 +80,14 @@ def draw_scene():
             pygame.draw.rect(screen, (70, 70, 70), rect, 1)
 
             if warehouse[r][c] > 0:
-                pygame.draw.rect(screen, (190, 140, 60), (x + 4, y + 4, CELL - 8, CELL - 8))
+                # dibujar la caja
+                screen.blit(box_img, (x, y))
+
+                # número de cajas (centrado)
                 txt = font_small.render(str(warehouse[r][c]), True, (0, 0, 0))
-                screen.blit(txt, (x + 6, y + 4))
+                tx = x + CELL // 2 - txt.get_width() // 2
+                ty = y + CELL // 2 - txt.get_height() // 2
+                screen.blit(txt, (tx, ty))
 
     # robots
     for rb in robots:
@@ -142,23 +152,31 @@ while running:
             total_moves += 1
 
     # ---------------- CHECK COMPLETION ----------------
+    # 1) ¿Quedan cajas fuera de la fila destino?
     remaining_outside = any(
         warehouse[r][c] > 0 and (r, c) not in destination_cells
         for r in range(GRID_H)
         for c in range(GRID_W)
     )
 
+    # 2) ¿Algún robot sigue cargando caja?
+    robots_carrying = any(rb.carrying for rb in robots)
+
+    # 3) ¿Ya están formados?
     formed = all(rb.state == "form" and not rb.path for rb in robots)
 
-    # Step 1: if no boxes outside destination → robots start forming up
+    # Step 1:
+    # Si ya NO hay cajas fuera de la fila destino,
+    # los robots que NO traen caja se pueden ir a formar
     if not remaining_outside:
         for rb in robots:
-            if rb.state != "form":
+            if not rb.carrying and rb.state != "form":
                 rb.state = "form"
                 rb.path = []
 
-    # Step 2: once formed → finish
-    if not remaining_outside and formed and not finished:
+    # Step 2:
+    # Cuando ya no hay cajas fuera, nadie trae caja y todos se formaron → éxito
+    if not remaining_outside and not robots_carrying and formed and not finished:
         finished = True
         elapsed_s = (pygame.time.get_ticks() - start_time_ms) / 1000.0
         show_popup(True, elapsed_s, total_moves)
