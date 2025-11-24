@@ -17,7 +17,7 @@ class Robot:
         self.y = r * CELL
         self.color = color
 
-        # cargar sprite del robot
+        # sprite
         self.sprite = pygame.image.load("sources/robot.png").convert_alpha()
         self.sprite = pygame.transform.scale(self.sprite, (CELL, CELL))
 
@@ -33,6 +33,7 @@ class Robot:
         self.moves = 0
         self.wait_frames = 0
 
+        # Paredes (NO pisables)
         self.walls = get_walls()
 
     def dist_manhattan(self, a, b):
@@ -75,9 +76,10 @@ class Robot:
         return True
 
     def safe_move(self, nr, nc, robots_positions, allowed_map):
+        # No entrar a paredes
         if (nr, nc) in self.walls:
             return False
-        
+
         if self.dist_manhattan((self.r, self.c), (nr, nc)) != 1 and (nr, nc) != (self.r, self.c):
             return False
 
@@ -90,29 +92,27 @@ class Robot:
         if self.warehouse[nr][nc] > 0:
             return False
 
+        # movimiento físico
         tx = nc * CELL
         ty = nr * CELL
         dx = tx - self.x
         dy = ty - self.y
         dist = math.hypot(dx, dy)
+
         if dist == 0:
             self.r, self.c = nr, nc
             return True
 
-        speed_px = MOVE_SPEED
-        if speed_px <= 0:
-            self.x += (tx - self.x) * 0.2
-            self.y += (ty - self.y) * 0.2
-        else:
-            move = min(speed_px, dist)
-            self.x += (dx / dist) * move
-            self.y += (dy / dist) * move
+        move = min(MOVE_SPEED, dist)
+        self.x += (dx / dist) * move
+        self.y += (dy / dist) * move
 
         if abs(self.x - tx) < 1 and abs(self.y - ty) < 1:
             self.x = tx
             self.y = ty
             self.r, self.c = nr, nc
             return True
+
         return None
 
     def update(self, robots, allowed_map):
@@ -124,6 +124,7 @@ class Robot:
         W = len(self.warehouse[0])
         robots_positions = {(rb.r, rb.c) for rb in robots if rb is not self}
 
+        # ---------------- MOVEMENT ----------------
         if self.path:
             if not self._path_is_valid_adjacent_steps(self.path):
                 self.path = []
@@ -135,31 +136,32 @@ class Robot:
 
             if m is None:
                 return
+
             if m is False:
                 occupied = set(robots_positions)
                 for r in range(H):
                     for c in range(W):
                         if self.warehouse[r][c] > 0:
                             occupied.add((r, c))
+
+                # paredes bloquean paso real
                 occupied |= self.walls
+
                 if (self.r, self.c) in occupied:
                     occupied.remove((self.r, self.c))
+
                 goal = self.path[-1] if self.path else None
                 new_route = bfs((self.r, self.c), [goal], occupied, self.warehouse) if goal else None
 
                 if not new_route:
-                    if self.state in ("going_drop", "plan_drop"):
-                        self.path = []
-                        self.state = "plan_drop"
-                        self.wait_frames = random.randint(0, 3)
-                        return
-                    else:
-                        self.path = []
-                        self.wait_frames = random.randint(0, 3)
-                        return
+                    self.path = []
+                    self.wait_frames = random.randint(0, 3)
+                    self.state = "plan_drop" if self.state in ("going_drop", "plan_drop") else self.state
+                    return
 
-                if len(new_route) >= 1 and new_route[0] == (self.r, self.c):
+                if new_route[0] == (self.r, self.c):
                     new_route = new_route[1:]
+
                 self.path = new_route
                 return
 
@@ -167,19 +169,24 @@ class Robot:
             self.moves += 1
             return
 
-        # STATE MACHINE --------------------------------------------------------
+        # ---------------- STATE MACHINE ----------------
 
+        # ---- SEARCH ----
         if self.state == "search":
             goals = set()
             for r in range(H):
                 for c in range(W):
                     if self.warehouse[r][c] > 0 and (r, c) not in self.destinations:
                         for nr, nc in neighbors4(r, c, H, W):
-                            if self.warehouse[nr][nc] == 0 and (nr, nc) not in robots_positions and (nr, nc) not in self.walls:
+                            if (
+                                self.warehouse[nr][nc] == 0
+                                and (nr, nc) not in robots_positions
+                                and (nr, nc) not in self.walls
+                            ):
                                 goals.add((nr, nc))
 
             if not goals:
-                self.state = "form"
+                self.wait_frames = random.randint(1, 3)
                 return
 
             blocked = set(robots_positions)
@@ -187,7 +194,10 @@ class Robot:
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+
+            # paredes bloquean BFS
             blocked |= self.walls
+
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
@@ -195,14 +205,11 @@ class Robot:
             if route:
                 if route[0] == (self.r, self.c):
                     route = route[1:]
-                if route and self.dist_manhattan((self.r, self.c), route[0]) != 1:
-                    self.path = []
-                    self.wait_frames = random.randint(0, 2)
-                    return
                 self.path = route
                 self.state = "going_box"
             return
 
+        # ---- GOING BOX ----
         if self.state == "going_box":
             for nr, nc in neighbors4(self.r, self.c, H, W):
                 if self.warehouse[nr][nc] > 0 and (nr, nc) not in self.destinations:
@@ -214,6 +221,7 @@ class Robot:
             self.state = "search"
             return
 
+        # ---- PLAN DROP ----
         if self.state == "plan_drop":
             adj_goals, pile = self.find_drop_adjacent_goals()
             if not adj_goals:
@@ -225,7 +233,9 @@ class Robot:
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+
             blocked |= self.walls
+
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
@@ -233,9 +243,6 @@ class Robot:
             if route:
                 if route[0] == (self.r, self.c):
                     route = route[1:]
-                if route and self.dist_manhattan((self.r, self.c), route[0]) != 1:
-                    self.wait_frames = random.randint(0, 2)
-                    return
                 self.path = route
                 self.target_pile = pile
                 self.state = "going_drop"
@@ -243,8 +250,10 @@ class Robot:
                 self.wait_frames = random.randint(0, 3)
             return
 
+        # ---- GOING DROP ----
         if self.state == "going_drop":
             if not self.path:
+
                 if not self.target_pile:
                     self.state = "plan_drop"
                     return
@@ -274,14 +283,18 @@ class Robot:
                             break
 
                 if not found:
-                    self.target_pile = None
                     self.state = "plan_drop"
+                    self.target_pile = None
                     self.wait_frames = random.randint(0, 3)
                     return
 
                 adj_free = set()
                 for ar, ac in neighbors4(found[0], found[1], H, W):
-                    if self.warehouse[ar][ac] == 0 and (ar, ac) not in robots_positions and (ar, ac) not in self.walls:
+                    if (
+                        self.warehouse[ar][ac] == 0
+                        and (ar, ac) not in robots_positions
+                        and (ar, ac) not in self.walls
+                    ):
                         adj_free.add((ar, ac))
 
                 if not adj_free:
@@ -295,7 +308,9 @@ class Robot:
                     for cc in range(W):
                         if self.warehouse[rr][cc] > 0:
                             blocked.add((rr, cc))
+
                 blocked |= self.walls
+
                 if (self.r, self.c) in blocked:
                     blocked.remove((self.r, self.c))
 
@@ -303,29 +318,26 @@ class Robot:
                 if route:
                     if route[0] == (self.r, self.c):
                         route = route[1:]
-                    if route and self.dist_manhattan((self.r, self.c), route[0]) != 1:
-                        self.wait_frames = random.randint(0, 2)
-                        self.target_pile = None
-                        self.state = "plan_drop"
-                        return
                     self.path = route
                     self.target_pile = found
-                    self.state = "going_drop"
                 else:
                     self.target_pile = None
                     self.state = "plan_drop"
                     self.wait_frames = random.randint(0, 3)
                 return
-            return
 
+        # ---- FORM ----
         if self.state == "form":
-            goal = (1, min(self.id, W-1))
+            goal = (1, min(self.id, W-1))   # fila 1 → no usar la pared de arriba
+
             blocked = set(robots_positions)
             for rr in range(H):
                 for cc in range(W):
                     if self.warehouse[rr][cc] > 0:
                         blocked.add((rr, cc))
+
             blocked |= self.walls
+
             if (self.r, self.c) in blocked:
                 blocked.remove((self.r, self.c))
 
@@ -333,21 +345,13 @@ class Robot:
             if route:
                 if route[0] == (self.r, self.c):
                     route = route[1:]
-                if route and self.dist_manhattan((self.r, self.c), route[0]) != 1:
-                    self.wait_frames = random.randint(0, 2)
-                    return
                 self.path = route
-                if self.path:
-                    self.state = "going_drop"
             return
 
     # ---------------- DRAW ----------------
-
     def draw(self, screen):
-        # dibujar sprite del robot
         screen.blit(self.sprite, (int(self.x), int(self.y)))
 
-        # borde café cuando carga caja
         if self.carrying:
             margin = 3
             rect = pygame.Rect(int(self.x), int(self.y), CELL, CELL)
